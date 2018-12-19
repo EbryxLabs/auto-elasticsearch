@@ -1,6 +1,7 @@
 import requests
 import os
 import json
+import argparse
 
 QUERY = '''
 {
@@ -26,9 +27,15 @@ QUERY = '''
   }
 }'''
 
+def define_params():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--path', help='path to config folder having at ' +
+                        'least global.conf file. [default: ./configs]', default='configs')
+    return parser.parse_args()
+
 def read_config(foldername):
     if not os.path.isdir(foldername):
-        exit('No config folder exists.')
+        exit('No config folder exists: %s' % (foldername))
 
     conf_files = [os.path.join(foldername, x) for x in os.listdir(foldername) if x.endswith(('.conf','.cnf')) and not x.startswith('.')]
     conf_data = {}
@@ -74,7 +81,8 @@ def make_request(data, query):
             print('%02d: %s' % (index + 1, nhost))
     
 if __name__ == '__main__':
-    confs = read_config('./configs')
+    args = define_params()
+    confs = read_config(args.path)
     query = make_query(confs)
     make_request(confs, query)
     
