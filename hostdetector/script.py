@@ -4,6 +4,9 @@ import time
 import logging
 import argparse
 import requests
+from elasticsearch import Elasticsearch
+
+import es_wrapper
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -64,49 +67,54 @@ def  make_query(data):
 
 def make_request(data, query):
 
-  url = 'http://' + data['global']['endpoint'].strip('/').strip('http://') + '/' + data['global']['index'] + '/_search'
-  print(url); print(json.dumps(query, indent=2)); print('#' * 60)
+  host = data['global']['endpoint'].strip('/').strip('http://')
+  port = data['global']['port']
+  index = data['global']['index']
+
+  # es = Elasticsearch(host + ':80')
+  es = es_wrapper.get_es_client(host, port)
+  print(host + ' [%s]' % (index)); print(json.dumps(query, indent=2)); print('#' * 60)
 
   response, _count = (None, 0)
   while not response and _count < 5:
     try:
-      response = requests.get(url, json=query)
+      response = es.search(index=index, body=query)
     except:
-      logger.info('Could not send elasticsearch request. Retrying after 10 secs...')
-      time.sleep(10)
       _count += 1
-
+      logger.info('Could not send elasticsearch query request. ' +
+                  'Retrying after 10 secs...')
+      time.sleep(10)
+  
   if not response:
     exit('Exiting program.')
 
-  if response.status_code == 200:
-    rdata = response.json()
-    if not(rdata.get('aggregations') and rdata['aggregations'].get(
-        'unique_hosts') and rdata['aggregations']['unique_hosts'].get('buckets')):
-      exit('[%d] Unexpected data returned.' % (response.status_code))
+  rdata = response
+  if not(rdata.get('aggregations') and rdata['aggregations'].get(
+      'unique_hosts') and rdata['aggregations']['unique_hosts'].get('buckets')):
+    exit('[%d] Unexpected data returned.' % (response.status_code))
 
-    hosts = [entry.get('key') for entry in rdata['aggregations']['unique_hosts']['buckets']]
+  hosts = [entry.get('key') for entry in rdata['aggregations']['unique_hosts']['buckets']]
 
-    if not os.path.isfile(data['global']['host_file']):
-      open(data['global']['host_file'], 'w')
+  if not os.path.isfile(data['global']['host_file']):
+    open(data['global']['host_file'], 'w')
 
-    hosts_on_disk = [entry.strip('\n') for entry in open(
-      data['global']['host_file'], 'r').readlines()]
+  hosts_on_disk = [entry.strip('\n') for entry in open(
+    data['global']['host_file'], 'r').readlines()]
 
-    new_hosts = list(set(hosts) - set(hosts_on_disk))
-    
-    hfile = open(data['global']['host_file'], 'w')
-    hfile.writelines([entry + '\n' for entry in hosts])
-    hfile.close()
+  new_hosts = list(set(hosts) - set(hosts_on_disk))
+  
+  hfile = open(data['global']['host_file'], 'w')
+  hfile.writelines([entry + '\n' for entry in hosts])
+  hfile.close()
 
-    if not new_hosts:
-      logger.info('No new host detected :)')
+  if not new_hosts:
+    logger.info('No new host detected :)')
 
-      logger.info('Following are the new hosts...') if new_hosts else None
-      for index, nhost in enumerate(new_hosts):
-        logger.info('%02d: %s' % (index + 1, nhost))
+    logger.info('Following are the new hosts...') if new_hosts else None
+    for index, nhost in enumerate(new_hosts):
+      logger.info('%02d: %s' % (index + 1, nhost))
 
-    return new_hosts
+  return new_hosts
 
 def post_on_slack(data, result):
 
@@ -137,10 +145,17 @@ def post_on_slack(data, result):
       logger.info('Could not push message: <(%s) %s>' % (
         response.status_code, response.content.decode('utf8')))
 
-if __name__ == '__main__':
-
+def lambda_handler(event, context):
   params = define_params()
   confs = read_config(params.path)
   query = make_query(confs)
   result = make_request(confs, query)
   post_on_slack(confs, result)
+
+  return {
+    'statusCode': 200,
+    'body': json.dumps({'message': 'Sample exit body.'})
+  }
+
+if __name__ == '__main__':
+  lambda_handler({},{})

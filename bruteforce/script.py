@@ -4,6 +4,11 @@ import time
 import logging
 import argparse
 import requests
+import pycountry
+from ipwhois import IPWhois
+# from elasticsearch import Elasticsearch
+
+import es_wrapper
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -117,13 +122,19 @@ def is_ip_whitelisted(data, host_name, client):
   return False
 
 def make_request(data, query):
-  url = 'http://' + data['global']['endpoint'].strip('/').strip('http://') + '/' + data['global']['index'] + '/_search'
-  print(url); print(json.dumps(query, indent=2)); print('#' * 60)
+
+  host = data['global']['endpoint'].strip('/').strip('http://')
+  port = data['global']['port']
+  index = data['global']['index']
+
+  # es = Elasticsearch(host + ':80')
+  es = es_wrapper.get_es_client(host, port)
+  print(host + ' [%s]' % (index)); print(json.dumps(query, indent=2)); print('#' * 60)
 
   response, _count = (None, 0)
   while not response and _count < 5:
     try:
-      response = requests.get(url, json=query)
+      response = es.search(index=index, body=query)
     except:
       _count += 1
       logger.info('Could not send elasticsearch query request. ' +
@@ -131,35 +142,50 @@ def make_request(data, query):
       time.sleep(10)
   
   if not response:
-    exit('Exiting progrma.')
+    exit('Exiting program.')
 
-  if response.status_code == 200:
-    rdata = response.json()
-    if not(rdata.get('aggregations') and rdata['aggregations'].get(
-        'hosts') and rdata['aggregations']['hosts'].get('buckets')):
-      exit('[%d] Unexpected data returned.' % (response.status_code))
+  rdata = response
+  if not(rdata.get('aggregations') and rdata['aggregations'].get(
+      'hosts') and rdata['aggregations']['hosts'].get('buckets')):
+    exit('[%d] Unexpected data returned.')
 
-    hosts = rdata['aggregations']['hosts']['buckets']
-    filtered_data = list()
-    for host in hosts:
-      if not(host.get('clients') and host['clients'].get('buckets')):
+  hosts = rdata['aggregations']['hosts']['buckets']
+  filtered_data = list()
+  for host in hosts:
+    if not(host.get('clients') and host['clients'].get('buckets')):
+      continue
+    host_data = dict()
+    host_data['name'] = host['key']
+    host_data['clients'] = list()
+
+    clients = host['clients']['buckets']
+    for client in clients:
+      if is_ip_whitelisted(data, host_data['name'], client):
         continue
-      host_data = dict()
-      host_data['name'] = host['key']
-      host_data['clients'] = list()
 
-      clients = host['clients']['buckets']
-      for client in clients:
-        if is_ip_whitelisted(data, host_data['name'], client):
-          continue
+      host_data['clients'].append({'ip': client['key'], 'req_count': client['doc_count']})
 
-        host_data['clients'].append({'ip': client['key'], 'req_count': client['doc_count']})
+    if len(host_data['clients']) > 0:
+      filtered_data.append(host_data)
 
-      if len(host_data['clients']) > 0:
-        filtered_data.append(host_data)
+  logger.debug(json.dumps(filtered_data, indent=2))
+  return filtered_data
 
-    logger.debug(json.dumps(filtered_data, indent=2))
-    return filtered_data
+def get_whois(ip_addr):
+
+  obj = IPWhois(ip_addr)
+  result = obj.lookup_rdap()
+  ccode = result.get('asn_country_code')
+  if len(ccode) == 2:
+    country = pycountry.countries.get(alpha_2=ccode)
+    country = country.name if country else ccode
+  elif len(ccode) == 3:
+    country = pycountry.countries.get(alpha_3=ccode)
+    country = country.name if country else ccode
+  else:
+    country = ccode
+
+  return country, result.get('asn_description')
 
 def post_on_slack(data, result):
 
@@ -170,7 +196,9 @@ def post_on_slack(data, result):
   for entry in result:
     text += entry['name'] + '\n'
     for client in entry['clients']:
-      text += '> *%s*: %d\n' % (client['ip'], client['req_count'])
+      country, desc = get_whois(client['ip'])
+      text += '> *%s*: %d `%s` `%s`\n' % (client['ip'],
+        client['req_count'], country, desc)
 
   for url in data['global'].get('slack_urls', list()):
     logger.info('Sending to slack: %s' % url)
@@ -194,11 +222,18 @@ def post_on_slack(data, result):
       logger.info('Could not push message: <(%s) %s>' % (
         response.status_code, response.content.decode('utf8')))
 
-if __name__ == '__main__':
+def lambda_handler(event, context):
   params = define_params()
   confs = read_config(params.path)
   query = make_query(confs)
   result = make_request(confs, query)
   post_on_slack(confs, result)
 
+  return {
+    'statusCode': 200,
+    'body': json.dumps({'message': 'Sample exit body.'})
+  }
+
+if __name__ == '__main__':
+  lambda_handler({},{})
   
