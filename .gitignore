@@ -1,5 +1,6 @@
 *.logs
 .hosts
+.vscode/
 .venv/
 */__pycache__
 *.zip

@@ -3,6 +3,10 @@ import time
 import boto3
 import logging
 
+from mysql import MySQLParser
+from oracle import OracleParser
+from postgres import PostgreSQLParser
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -125,16 +129,23 @@ def include_log_events(instances):
         for group_name, streams in log_groups.items():
             log_events = logs.filter_log_events(
                 logGroupName=group_name,
-                startTime=get_time_range(5)[0]
+                startTime=get_time_range(45)[0]
             )
 
             add_events(log_events, streams, event_count)
 
     logger.info('[%d] Log events fetched.' % (event_count['_']))
-    logger.info(json.dumps(instances, indent=2))
+    logger.debug(json.dumps(instances, indent=2))
 
 
 if __name__ == "__main__":
+
     instances = get_rds_instances()
     include_log_groups(instances)
     include_log_events(instances)
+
+    mysql = MySQLParser(instances)
+    psql = PostgreSQLParser(instances)
+    oracle = OracleParser(instances)
+
+    mysql.parse()
