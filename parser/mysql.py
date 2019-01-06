@@ -1,6 +1,5 @@
 import re
 import logging
-import datetime as dt
 from parser import Parser
 
 logger = logging.getLogger(__name__)
@@ -17,14 +16,6 @@ class MySQLParser(Parser):
     def __init__(self, rds_instances):
         super().__init__(rds_instances, ['mysql', 'mariadb'])
         self.safe_uids = list()
-
-    def parse(self):
-        for _, instance in self.instances.items():
-            for name, streams in instance['logGroups'].items():
-                self._parse(name, streams)
-
-    def get_time(self, timestamp):
-        return str(dt.datetime.fromtimestamp(timestamp / 1000))
 
     def _prune_general(self, message):
 
@@ -61,11 +52,8 @@ class MySQLParser(Parser):
     def _parse(self, group_name, streams):
 
         for stream in streams:
-            logger.info('')
-            logger.info('#' + '=' * 60)
-            logger.info('Log events from %s' % (group_name))
-            logger.info('')
 
+            self.show_stream_separator(group_name)
             if not stream.get('events'):
                 continue
 

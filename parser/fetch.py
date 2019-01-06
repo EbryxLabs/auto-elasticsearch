@@ -149,3 +149,5 @@ if __name__ == "__main__":
     oracle = OracleParser(instances)
 
     mysql.parse()
+    psql.parse()
+    oracle.parse()
